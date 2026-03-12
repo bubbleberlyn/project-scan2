@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QR Scanner เบิกสินค้า</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <!-- โหลดไลบรารี jsQR -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Sarabun', sans-serif;
+      min-height: 100vh;
+      background: #f0f4f8;
+      color: #334155;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 40px 20px;
+    }
+    .container {
+      width: 100%; max-width: 480px;
+      background: white;
+      border-radius: 20px;
+      padding: 30px 20px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+      text-align: center;
+    }
+    h2 { font-size: 1.5em; color: #1e293b; margin-bottom: 20px; }
+    
+    /* ปุ่มควบคุม */
+    .btn {
+      width: 100%; padding: 15px; border: none; border-radius: 12px;
+      font-size: 16px; font-weight: 600; font-family: 'Sarabun', sans-serif;
+      cursor: pointer; transition: all 0.3s ease; margin-bottom: 15px;
+    }
+    .btn-start { background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; box-shadow: 0 4px 15px rgba(59,130,246,0.3); }
+    .btn-stop { background: #ef4444; color: white; display: none; }
+    
+    /* ส่วนของกล้อง */
+    .video-wrapper {
+      position: relative; width: 100%; border-radius: 16px; overflow: hidden;
+      background: #0f172a; margin-bottom: 20px; display: none;
+    }
+    video { width: 100%; display: block; object-fit: cover; }
+    .scan-line {
+      position: absolute; left: 0; right: 0; top: 10%; height: 2px;
+      background: #34d399; box-shadow: 0 0 10px #34d399;
+      animation: scan 2s infinite linear;
+    }
+    @keyframes scan { 0% { top: 10%; } 50% { top: 90%; } 100% { top: 10%; } }
+    #canvasElement { display: none; }
+
+    /* กล่องข้อความแสดงผล */
+    #statusBox {
+      padding: 15px; border-radius: 12px; display: none; font-size: 0.95em; line-height: 1.5;
+    }
+    .loading { background: #e2e8f0; color: #475569; }
+    .success { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h2>📦 สแกน QR Code เบิกสินค้า</h2>
+
+  <button id="btnStart" class="btn btn-start" onclick="startCamera()">📷 เปิดกล้องสแกน</button>
+  <button id="btnStop" class="btn btn-stop" onclick="stopCamera()">🛑 ปิดกล้อง</button>
+
+  <div class="video-wrapper" id="videoWrapper">
+    <div class="scan-line"></div>
+    <video id="video" playsinline></video>
+  </div>
+  <canvas id="canvasElement"></canvas>
+
+  <div id="statusBox"></div>
+</div>
+
+<script>
+  // ==========================================================
+  // ⚠️ นำ Web App URL ของคุณมาวางตรงนี้ (ต้องลงท้ายด้วย /exec)
+  // ==========================================================
+  const API_URL = "https://script.google.com/macros/s/AKfycby2MBLtqnhQZ6aTuFpdMD9SldMr4FqU50eOsfpzSw7u7Wa3m-dr2a66QqFN5OiChNT3vQ/exec";
+
+  const video = document.getElementById('video');
+  const canvasElement = document.getElementById('canvasElement');
+  const canvas = canvasElement.getContext('2d');
+  const btnStart = document.getElementById('btnStart');
+  const btnStop = document.getElementById('btnStop');
+  const videoWrapper = document.getElementById('videoWrapper');
+  const statusBox = document.getElementById('statusBox');
+
+  let scanning = false;
+  let stream = null;
+
+  // 1. เปิดกล้อง (ใช้กล้องหลัง)
+  async function startCamera() {
+    statusBox.style.display = 'none';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      video.srcObject = stream;
+      video.setAttribute("playsinline", true); // สำคัญสำหรับ iOS
+      video.play();
+      
+      videoWrapper.style.display = 'block';
+      btnStart.style.display = 'none';
+      btnStop.style.display = 'block';
+      
+      scanning = true;
+      requestAnimationFrame(tick);
+    } catch (err) {
+      showStatus("❌ ไม่สามารถเข้าถึงกล้องได้: " + err.message, "error");
+    }
+  }
+
+  // 2. ปิดกล้อง
+  function stopCamera() {
+    scanning = false;
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+    videoWrapper.style.display = 'none';
+    btnStart.style.display = 'block';
+    btnStop.style.display = 'none';
+  }
+
+  // 3. ฟังก์ชันสแกนหา QR Code ตลอดเวลาที่กล้องเปิด
+  function tick() {
+    if (!scanning) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvasElement.height = video.videoHeight;
+      canvasElement.width = video.videoWidth;
+      canvas.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
+      
+      const imageData = canvas.getImageData(0, 0, canvasElement.width, canvasElement.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: "dontInvert",
+      });
+
+      if (code) {
+        // เมื่อเจอ QR Code -> ปิดกล้องทันทีเพื่อกันสแกนเบิ้ล -> ส่งข้อมูล
+        stopCamera();
+        sendDataToGoogleSheet(code.data);
+        return;
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // 4. ส่งข้อมูลไป Google Apps Script (โครงสร้างแบบเดียวกับระบบ Face Scan)
+  async function sendDataToGoogleSheet(qrData) {
+    showStatus(`⏳ กำลังตรวจสอบรหัส: <b>${qrData}</b>...`, "loading");
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        // ส่งเป็น JSON ไปให้ doPost(e) ฝั่ง GAS ประมวลผล
+        body: JSON.stringify({ qrData: qrData }) 
+      });
+      
+      const result = await response.json();
+
+      if (result.success) {
+        // พบข้อมูลและบันทึกสำเร็จ
+        showStatus(`✅ <b>${result.message}</b><br>รหัส: ${qrData}<br>ข้อมูล C: ${result.dataC}<br>ข้อมูล D: ${result.dataD}`, "success");
+      } else {
+        // ไม่พบข้อมูล หรือ Error
+        showStatus(`❌ <b>${result.message}</b><br>รหัส: ${qrData}`, "error");
+      }
+    } catch (error) {
+      // ดัก Error กรณีลิงก์ผิด หรือไม่ได้ Deploy แบบ Anyone
+      showStatus(`❌ เชื่อมต่อล้มเหลว กรุณาตรวจสอบลิงก์ API หรือการตั้งค่าสิทธิ์ใน Google Script`, "error");
+    }
+  }
+
+  // ฟังก์ชันช่วยเหลือสำหรับแสดงแถบสีข้อความ
+  function showStatus(message, className) {
+    statusBox.innerHTML = message;
+    statusBox.className = className;
+    statusBox.style.display = 'block';
+  }
+</script>
+
+</body>
+</html>
